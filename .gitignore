@@ -1,0 +1,26 @@
+### Node / frontend
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+### React build outputs
+build/
+dist/
+.cache/
+
+### Java / Spring
+target/
+*.class
+*.log
+
+### OS / Editor
+.DS_Store
+Thumbs.db
+.vscode/
+
+### Env / secrets
+.env
+.env.*
+
