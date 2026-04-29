@@ -4,10 +4,13 @@ import {
   ResponsiveContainer,
   BarChart,
   Bar,
+  LineChart,
+  Line,
   XAxis,
   YAxis,
   CartesianGrid,
-  Tooltip
+  Tooltip,
+  Legend
 } from "recharts";
 import BlockchainRibbon from "./components/BlockchainRibbon";
 import "./App.css";
@@ -39,6 +42,28 @@ function App() {
   const [credits, setCredits] = useState("");
   const [transactions, setTransactions] = useState([]);
   const [message, setMessage] = useState({ type: "", text: "" });
+
+  // ─── AI Feature State ───────────────────────────────────────────
+  // Emission Prediction
+  const [predHistory, setPredHistory] = useState("");
+  const [predSteps, setPredSteps] = useState("3");
+  const [predResult, setPredResult] = useState(null);
+  const [predLoading, setPredLoading] = useState(false);
+
+  // Credit Price Recommendation
+  const [priceResult, setPriceResult] = useState(null);
+  const [priceLoading, setPriceLoading] = useState(false);
+
+  // Suspicious Transaction Detection
+  const [detectCredits, setDetectCredits] = useState("");
+  const [detectBuyer, setDetectBuyer] = useState("");
+  const [detectSeller, setDetectSeller] = useState("");
+  const [detectFreq, setDetectFreq] = useState("1");
+  const [detectAvg, setDetectAvg] = useState("50");
+  const [detectResult, setDetectResult] = useState(null);
+  const [detectLoading, setDetectLoading] = useState(false);
+  const [allFlagged, setAllFlagged] = useState([]);
+  const [allFlaggedLoading, setAllFlaggedLoading] = useState(false);
 
   useEffect(() => {
     const token = localStorage.getItem("token");
@@ -252,6 +277,93 @@ const assignCreditsToCompany = async () => {
     { name: "Credits", value: company?.creditBalance || 0 },
     { name: "Score", value: company?.carbonScore || 0 }
   ];
+
+  // ─── AI Feature Handlers ────────────────────────────────────────
+  const runPrediction = async () => {
+    const histArr = predHistory.split(",")
+      .map(s => parseFloat(s.trim()))
+      .filter(n => !isNaN(n));
+    if (histArr.length < 2) {
+      setFeedback("error", "Enter at least 2 comma-separated CO2 values.");
+      return;
+    }
+    setPredLoading(true);
+    try {
+      const res = await axios.post(`${API_BASE}/ai/predict`, {
+        companyId: Number(companyId),
+        historicalEmissions: histArr,
+        steps: Math.max(1, Math.min(12, parseInt(predSteps) || 3))
+      });
+      setPredResult(res.data);
+      setFeedback("success", "Emission prediction complete.");
+    } catch {
+      setFeedback("error", "Prediction failed. AI engine may be offline – using fallback.");
+    } finally {
+      setPredLoading(false);
+    }
+  };
+
+  const fetchPrice = async () => {
+    setPriceLoading(true);
+    try {
+      const res = await axios.get(`${API_BASE}/ai/price`);
+      setPriceResult(res.data);
+      setFeedback("success", "Price recommendation loaded.");
+    } catch {
+      setFeedback("error", "Price recommendation failed.");
+    } finally {
+      setPriceLoading(false);
+    }
+  };
+
+  const runDetect = async () => {
+    if (!detectCredits || !detectBuyer || !detectSeller) {
+      setFeedback("error", "Fill in credits, buyer ID, and seller ID.");
+      return;
+    }
+    setDetectLoading(true);
+    try {
+      const res = await axios.post(`${API_BASE}/ai/detect`, {
+        credits: parseFloat(detectCredits),
+        buyerId: parseInt(detectBuyer),
+        sellerId: parseInt(detectSeller),
+        txCountLast24h: parseInt(detectFreq) || 1,
+        avgCreditsPerTx: parseFloat(detectAvg) || 50
+      });
+      setDetectResult(res.data);
+      setFeedback("success", "Anomaly scan complete.");
+    } catch {
+      setFeedback("error", "Anomaly detection failed.");
+    } finally {
+      setDetectLoading(false);
+    }
+  };
+
+  const scanAllTransactions = async () => {
+    setAllFlaggedLoading(true);
+    try {
+      const res = await axios.get(`${API_BASE}/ai/detect/all`);
+      const flagged = Array.isArray(res.data)
+        ? res.data.filter(tx => tx.isSuspicious)
+        : [];
+      setAllFlagged(flagged);
+      setFeedback("success", `Scan complete. ${flagged.length} suspicious transaction(s) found.`);
+    } catch {
+      setFeedback("error", "Bulk scan failed.");
+    } finally {
+      setAllFlaggedLoading(false);
+    }
+  };
+
+  // Build chart data for emission prediction
+  const predChartData = useMemo(() => {
+    if (!predResult) return [];
+    const hist = predResult.historicalEmissions || [];
+    const pred = predResult.predictedEmissions || [];
+    const histPoints = hist.map((v, i) => ({ step: `H${i + 1}`, historical: v, predicted: null }));
+    const predPoints = pred.map((v, i) => ({ step: `P${i + 1}`, historical: null, predicted: v }));
+    return [...histPoints, ...predPoints];
+  }, [predResult]);
 
   const adminStats = useMemo(() => {
     const list = Array.isArray(allCompanies) ? allCompanies : [];
@@ -637,6 +749,71 @@ const assignCreditsToCompany = async () => {
               </div>
             </div>
           </div>
+
+          {/* ── Suspicious Transaction Monitor (Admin) ── */}
+          <div className="ai-panel ai-panel--danger">
+            <div className="ai-panel-head">
+              <div>
+                <span className="ai-badge ai-badge--red">🔍 Anomaly Detection</span>
+                <h3 className="panel-title">Suspicious Transaction Monitor</h3>
+                <p className="field-hint">Isolation Forest scans all transactions for anomalies.</p>
+              </div>
+              <button
+                className="btn btn-danger"
+                type="button"
+                onClick={scanAllTransactions}
+                disabled={allFlaggedLoading}
+              >
+                {allFlaggedLoading ? "Scanning…" : "Scan All Transactions"}
+              </button>
+            </div>
+
+            {allFlagged.length > 0 ? (
+              <div className="ai-flagged-list">
+                <p className="ai-flagged-summary">
+                  ⚠️ <strong>{allFlagged.length}</strong> suspicious transaction(s) detected
+                </p>
+                <div className="table-wrap ai-table-wrap">
+                  <table className="admin-table">
+                    <thead>
+                      <tr>
+                        <th>TX ID</th>
+                        <th>Buyer</th>
+                        <th>Seller</th>
+                        <th>Credits</th>
+                        <th>Risk Score</th>
+                        <th>Flags</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {allFlagged.map((tx, i) => (
+                        <tr key={i} className="ai-flagged-row">
+                          <td className="admin-mono">{tx.transactionId}</td>
+                          <td className="admin-mono">{tx.buyerId}</td>
+                          <td className="admin-mono">{tx.sellerId}</td>
+                          <td>{Number(tx.credits).toLocaleString()}</td>
+                          <td>
+                            <span className={`risk-badge ${tx.riskScore > 0.7 ? 'risk-high' : 'risk-medium'}`}>
+                              {(tx.riskScore * 100).toFixed(1)}%
+                            </span>
+                          </td>
+                          <td className="ai-flags">
+                            {Array.isArray(tx.flags) && tx.flags.map((f, fi) => (
+                              <span key={fi} className="ai-flag-chip">{f}</span>
+                            ))}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ) : allFlagged.length === 0 && !allFlaggedLoading ? (
+              <p className="placeholder-text" style={{marginTop: '0.75rem'}}>
+                Click "Scan All Transactions" to check for anomalies.
+              </p>
+            ) : null}
+          </div>
         </section>
       )}
 
@@ -900,6 +1077,258 @@ const assignCreditsToCompany = async () => {
     </>
   )}
 </section>
+
+      {/* ══════════════════════════════════════════════════════════════
+           AI FEATURES SECTION – visible to all logged-in users
+      ══════════════════════════════════════════════════════════════ */}
+      <section className="ai-features-section">
+        <div className="ai-features-header">
+          <span className="ai-features-eyebrow">⚡ Powered by Machine Learning</span>
+          <h2 className="ai-features-title">AI Intelligence Suite</h2>
+          <p className="ai-features-subtitle">
+            Predictive analytics, dynamic pricing, and anomaly detection — all in one place.
+          </p>
+        </div>
+
+        <div className="ai-features-grid">
+
+          {/* ── 1. Emission Prediction ── */}
+          <div className="ai-panel ai-panel--green">
+            <div className="ai-panel-head">
+              <div>
+                <span className="ai-badge ai-badge--green">📈 Linear Regression</span>
+                <h3 className="panel-title">Carbon Emission Prediction</h3>
+                <p className="field-hint">
+                  Enter past CO2 readings (comma-separated) to forecast future emissions.
+                </p>
+              </div>
+            </div>
+
+            <div className="ai-input-row">
+              <label className="auth-label auth-label--compact" style={{flex: 2}}>
+                Historical CO₂ values (comma-separated)
+                <input
+                  id="pred-history-input"
+                  className="field"
+                  placeholder="e.g. 30, 35, 28, 40, 43"
+                  value={predHistory}
+                  onChange={e => setPredHistory(e.target.value)}
+                />
+              </label>
+              <label className="auth-label auth-label--compact" style={{flex: 0.5}}>
+                Steps
+                <input
+                  id="pred-steps-input"
+                  className="field"
+                  type="number"
+                  min="1" max="12"
+                  value={predSteps}
+                  onChange={e => setPredSteps(e.target.value)}
+                />
+              </label>
+              <button
+                id="pred-run-btn"
+                className="btn btn-primary ai-run-btn"
+                type="button"
+                onClick={runPrediction}
+                disabled={predLoading}
+              >
+                {predLoading ? "Predicting…" : "Predict"}
+              </button>
+            </div>
+
+            {predResult && (
+              <div className="ai-result">
+                <div className="ai-result-stats">
+                  <div className="ai-stat">
+                    <span>Trend</span>
+                    <strong className={`trend-${predResult.trend}`}>
+                      {predResult.trend === "increasing" ? "📈" : predResult.trend === "decreasing" ? "📉" : "➡️"}
+                      {" "}{predResult.trend}
+                    </strong>
+                  </div>
+                  <div className="ai-stat">
+                    <span>Next Forecast</span>
+                    <strong>{predResult.predictedEmissions?.[0]} t CO₂</strong>
+                  </div>
+                  <div className="ai-stat">
+                    <span>Model</span>
+                    <strong style={{fontSize: '0.7rem'}}>Linear Regression</strong>
+                  </div>
+                </div>
+
+                {predChartData.length > 0 && (
+                  <div className="ai-chart-wrap">
+                    <ResponsiveContainer width="100%" height={200}>
+                      <LineChart data={predChartData}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                        <XAxis dataKey="step" tick={{ fill: "#64748b", fontSize: 11 }} />
+                        <YAxis tick={{ fill: "#64748b", fontSize: 11 }} />
+                        <Tooltip />
+                        <Legend />
+                        <Line
+                          type="monotone"
+                          dataKey="historical"
+                          stroke="#22c55e"
+                          strokeWidth={2}
+                          dot={{ r: 3 }}
+                          connectNulls={false}
+                          name="Historical"
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="predicted"
+                          stroke="#f59e0b"
+                          strokeWidth={2}
+                          strokeDasharray="5 5"
+                          dot={{ r: 3 }}
+                          connectNulls={false}
+                          name="Predicted"
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+
+                {predResult.reductionStrategies?.length > 0 && (
+                  <div className="ai-strategies">
+                    <p className="ai-strategies-title">💡 Reduction Strategies</p>
+                    <ul className="ai-strategies-list">
+                      {predResult.reductionStrategies.map((s, i) => (
+                        <li key={i}>{s}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* ── 2. Credit Price Recommendation ── */}
+          <div className="ai-panel ai-panel--blue">
+            <div className="ai-panel-head">
+              <div>
+                <span className="ai-badge ai-badge--blue">💰 Supply / Demand Model</span>
+                <h3 className="panel-title">Credit Price Recommendation</h3>
+                <p className="field-hint">
+                  Dynamic price based on current supply, demand, and carbon score trends.
+                </p>
+              </div>
+              <button
+                id="price-fetch-btn"
+                className="btn btn-primary"
+                type="button"
+                onClick={fetchPrice}
+                disabled={priceLoading}
+              >
+                {priceLoading ? "Loading…" : "Get Price"}
+              </button>
+            </div>
+
+            {priceResult && (
+              <div className="ai-result">
+                <div className="ai-price-hero">
+                  <span className="ai-price-label">Recommended Price</span>
+                  <span className="ai-price-value">
+                    ${priceResult.recommendedPrice}
+                    <span className="ai-price-currency"> {priceResult.currency}</span>
+                  </span>
+                  <span className={`ai-price-trend price-trend-${priceResult.priceTrend}`}>
+                    {priceResult.priceTrend === "rising" ? "↑ Rising" :
+                     priceResult.priceTrend === "falling" ? "↓ Falling" : "→ Stable"}
+                    {priceResult.deltaPercent !== 0 && ` (${priceResult.deltaPercent > 0 ? '+' : ''}${priceResult.deltaPercent}%)`}
+                  </span>
+                </div>
+                <div className="ai-result-stats" style={{marginTop: '0.75rem'}}>
+                  <div className="ai-stat">
+                    <span>Confidence</span>
+                    <strong>{(priceResult.confidence * 100).toFixed(1)}%</strong>
+                  </div>
+                </div>
+                <p className="ai-explanation">{priceResult.explanation}</p>
+                <p className="ai-model-tag">🤖 {priceResult.modelUsed}</p>
+              </div>
+            )}
+          </div>
+
+          {/* ── 3. Single Transaction Anomaly Check ── */}
+          <div className="ai-panel ai-panel--amber">
+            <div className="ai-panel-head">
+              <div>
+                <span className="ai-badge ai-badge--amber">🛡️ Isolation Forest</span>
+                <h3 className="panel-title">Transaction Anomaly Check</h3>
+                <p className="field-hint">Analyse a specific transaction for suspicious activity.</p>
+              </div>
+            </div>
+
+            <div className="ai-detect-grid">
+              <label className="auth-label auth-label--compact">
+                Credits
+                <input id="detect-credits" className="field" type="number" placeholder="e.g. 5000"
+                  value={detectCredits} onChange={e => setDetectCredits(e.target.value)} />
+              </label>
+              <label className="auth-label auth-label--compact">
+                Buyer ID
+                <input id="detect-buyer" className="field" type="number" placeholder="Buyer ID"
+                  value={detectBuyer} onChange={e => setDetectBuyer(e.target.value)} />
+              </label>
+              <label className="auth-label auth-label--compact">
+                Seller ID
+                <input id="detect-seller" className="field" type="number" placeholder="Seller ID"
+                  value={detectSeller} onChange={e => setDetectSeller(e.target.value)} />
+              </label>
+              <label className="auth-label auth-label--compact">
+                TX count (24h)
+                <input id="detect-freq" className="field" type="number" placeholder="1"
+                  value={detectFreq} onChange={e => setDetectFreq(e.target.value)} />
+              </label>
+              <label className="auth-label auth-label--compact">
+                Avg credits/TX
+                <input id="detect-avg" className="field" type="number" placeholder="50"
+                  value={detectAvg} onChange={e => setDetectAvg(e.target.value)} />
+              </label>
+            </div>
+            <button
+              id="detect-run-btn"
+              className="btn btn-primary btn-block"
+              type="button"
+              onClick={runDetect}
+              disabled={detectLoading}
+              style={{marginTop: '0.75rem'}}
+            >
+              {detectLoading ? "Scanning…" : "Scan Transaction"}
+            </button>
+
+            {detectResult && (
+              <div className={`ai-result ai-detect-result ${detectResult.isSuspicious ? 'ai-detect--alert' : 'ai-detect--safe'}`}>
+                <div className="ai-detect-verdict">
+                  <span className="ai-detect-icon">
+                    {detectResult.isSuspicious ? "⚠️" : "✅"}
+                  </span>
+                  <div>
+                    <p className="ai-detect-status">
+                      {detectResult.isSuspicious ? "Suspicious Transaction" : "Transaction Looks Normal"}
+                    </p>
+                    <p className="ai-detect-score">
+                      Risk Score: <strong>{(detectResult.riskScore * 100).toFixed(1)}%</strong>
+                    </p>
+                  </div>
+                </div>
+                {detectResult.flags?.length > 0 && (
+                  <div className="ai-flags-wrap">
+                    {detectResult.flags.map((f, i) => (
+                      <span key={i} className="ai-flag-chip">{f}</span>
+                    ))}
+                  </div>
+                )}
+                <p className="ai-model-tag">🤖 {detectResult.modelUsed}</p>
+              </div>
+            )}
+          </div>
+
+        </div>
+      </section>
+
     </div>
   );
 }
