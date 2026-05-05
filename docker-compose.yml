@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  mysql-db:
+    image: mysql:8.0
+    container_name: carbon_mysql
+    environment:
+      MYSQL_DATABASE: carbon_db
+      MYSQL_ROOT_PASSWORD: Rohith@2610
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  ai-engine:
+    build: ./ai-engine
+    container_name: carbon_ai_engine
+    ports:
+      - "8000:8000"
+    depends_on:
+      - mysql-db
+
+  backend:
+    build: ./carbon-credit-platform
+    container_name: carbon_backend
+    environment:
+      # Override the local DB URL to use the container name
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql-db:3306/carbon_db
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: Rohith@2610
+    ports:
+      - "8080:8080"
+    depends_on:
+      mysql-db:
+        condition: service_healthy
+
+  frontend:
+    build: ./frontend-ui
+    container_name: carbon_frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+
+volumes:
+  mysql_data:
