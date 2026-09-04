@@ -19,12 +19,33 @@ target/
 .DS_Store
 Thumbs.db
 .vscode/
+.idea/
+*.iml
 
-### Env / secrets
+### Env / secrets — never commit these
 .env
 .env.*
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+application-secret.properties
 
 ### Python
 __pycache__/
 *.pyc
+*.pyo
+venv/
+.venv/
+*.egg-info/
+
+### Large binary / local-only files
+*.zip
+*.pdf
+*.docx
+*.jar
+
+### AI engine virtual env
+ai-engine/venv/
+ai-engine/__pycache__/
 
